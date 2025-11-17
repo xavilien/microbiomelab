@@ -252,6 +252,41 @@ def nanopore_mutation(queries):
     return mutated_queries
 
 
+def compare_sequence_with_database(query_file, database):
+    my_query_sequence = ""
+    
+    # constructing the sequence from the query_file
+    try:
+        with open(query_file, 'r') as e:
+            next(e) 
+            for line in e:
+                my_query_sequence += line.strip()
+    
+    except FileNotFoundError:
+        print("Not found, error")
+        my_query_sequence = "" 
+
+    else:
+        print(f"Loaded query sequence, length: {len(my_query_sequence)})")
+
+        K = 15 
+        # convert to kmer set
+        print("converting library to kmer set")
+        database_kmers = ConvertLibaryToKmerSets(database, K)
+        
+        query_kmer_lib = ConvertLibaryToKmerSets({"my_query": my_query_sequence}, K)
+        my_query_kmer_set = query_kmer_lib["my_query"]
+        
+        print("Matching k-mers...")
+        (kmer_score, kmer_match) = KmerMatch(my_query_kmer_set, database_kmers)
+        
+        print("\n--- Results ---")
+        print(f"Best K-mer Match: {kmer_match}")
+        print(f"Score: {kmer_score}")
+        
+
+
+
 if __name__ == "__main__":
     fn = "bacterial_16s_genes.fa"
     database, queries = Load16SFastA(fn, fraction=0.5, database_size=10, query_size=5)
@@ -267,5 +302,10 @@ if __name__ == "__main__":
     nanopore_queries = nanopore_mutation(queries)
    
 
-   
-   
+    # task 10 comparing sequence to database
+    database, _ = Load16SFastA(fn, fraction=1.0, database_size=20486, query_size=0)
+
+    # file to read from
+    query_fasta_file = 'Kangas0346_21_R1-16S-rRNA-seqR.fasta'
+    compare_sequence_with_database(query_fasta_file, database)
+    
