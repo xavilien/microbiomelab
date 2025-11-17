@@ -7,6 +7,9 @@ Created on Thu Oct  4 17:32:48 2018
 import alignment
 import random
 import matplotlib.pyplot as plt
+import time
+import json
+import os
 random.seed(11)
 
 
@@ -84,38 +87,92 @@ def AlignmentMatch(sequence, library):
     return best_score, best_match   # stuff only to run when not called via 'import' here
 
 
-# Agreement curve as a function of k-mer size
-def plot_agreement_curve_1(database, queries):
-    num_thresholds = 10
-    thresholds = [2 * i + 1 for i in range(num_thresholds)]
-    overall_scores = []
+def check_benchmark(name):
+    with open("benchmark.json", 'r') as f:
+        benchmark = json.load(f)
+    return name in benchmark
 
-    best_K = None
-    best_score = None
 
+def save_benchmark(name, duration, max_agreement):
+    benchmark = {}
+    with open("benchmark.json", 'r') as f:
+        benchmark = json.load(f)
+
+    if name not in benchmark:
+        benchmark[name] = (duration, max_agreement)
+    with open("benchmark.json", 'w') as f:
+        json.dump(benchmark, f)
+
+
+def get_local_alignment_results(database, queries, query_type):
+    file_path = f"saved_results/local_alignment_{query_type}.json"
+    if os.path.isfile(file_path):
+        with open(file_path) as f:
+            agreement_results = json.load(f)
+        return agreement_results
+
+    start = time.time()
     agreement_results = {}
     for k, sequence in queries.items():
         _, alignment_best_match = AlignmentMatch(sequence, database)
         agreement_results[k] = alignment_best_match
+    end = time.time()
 
-    for K in thresholds:
-        print(f"Testing agreement for kmers of length {K}")
-        database_kmers = ConvertLibaryToKmerSets(database, K)
-        queries_kmers = ConvertLibaryToKmerSets(queries, K)
-        scores = []
-        for k, sequence in queries.items():
-            alignment_best_match = agreement_results[k]
-            _, kmer_best_match = KmerMatch(queries_kmers[k], database_kmers)
-            if kmer_best_match == alignment_best_match:
-                scores.append(1)
-            else:
-                scores.append(0)
+    duration = end - start
+    save_benchmark("local_alignment", duration, 1)
+    
+    with open(file_path, 'w') as f:
+        json.dump(agreement_results, f)
+    
+    return agreement_results
+
+
+# Agreement curve as a function of k-mer size
+def run_alignment_free(database, queries, query_type):
+    num_thresholds = 10
+    thresholds = [2 * i + 1 for i in range(num_thresholds)]
+
+    file_path = f"saved_results/alignment_free_{query_type}.json"
+    if not os.path.isfile(file_path):
+        overall_scores = []
+
+        best_K = None
+        best_score = None
+
+        local_alignment_results = get_local_alignment_results(database, queries, query_type)
+
+        for K in thresholds:
+            # print(f"Testing agreement for kmers of length {K}")
+            database_kmers = ConvertLibaryToKmerSets(database, K)
+            queries_kmers = ConvertLibaryToKmerSets(queries, K)
+            scores = []
+            for k in queries:
+                alignment_best_match = local_alignment_results[k]
+                _, kmer_best_match = KmerMatch(queries_kmers[k], database_kmers)
+                if kmer_best_match == alignment_best_match:
+                    scores.append(1)
+                else:
+                    scores.append(0)
+            
+            score = sum(scores) / len(scores)
+            overall_scores.append(score)
+            if best_score is None or score > best_score:
+                best_K = K
+                best_score = score
         
-        score = sum(scores) / len(scores)
-        overall_scores.append(score)
-        if best_score is None or score > best_score:
-            best_K = K
-            best_score = score
+        with open(file_path, 'w') as f:
+            results = {
+                "overall_scores": overall_scores,
+                "best_K": best_K
+            }
+
+            json.dump(results, f)
+
+    else:
+        with open(file_path) as f:
+            results = json.load(f)
+            overall_scores = results["overall_scores"]
+            best_K = results["best_K"]
 
     plt.figure()
     plt.plot(thresholds, overall_scores, marker='o')
@@ -123,11 +180,35 @@ def plot_agreement_curve_1(database, queries):
     plt.ylabel('Agreement')
     plt.title('K-mer vs Alignment Agreement')
     plt.ylim(0, 1)
-    out_path = "task4.png"
-    plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    plt.savefig(f"graphs/agreement_against_kmer_size_{query_type}.png", bbox_inches='tight', dpi=300)
     plt.close()
 
     return best_K
+
+
+def benchmark_alignment_free(database, queries, query_type, best_K):
+    if check_benchmark("alignment_free"):
+        return
+    
+    local_alignment_results = get_local_alignment_results(database, queries, query_type)
+
+    start = time.time()
+    database_kmers = ConvertLibaryToKmerSets(database, best_K)
+    queries_kmers = ConvertLibaryToKmerSets(queries, best_K)
+    scores = []
+    for k in queries:
+        alignment_best_match = local_alignment_results[k]
+        _, kmer_best_match = KmerMatch(queries_kmers[k], database_kmers)
+        if kmer_best_match == alignment_best_match:
+            scores.append(1)
+        else:
+            scores.append(0)
+    end = time.time()
+    
+    score = sum(scores) / len(scores)
+    duration = end - start
+    save_benchmark("alignment_free", duration, score)
+
 
 def calculateMinimizers(window_size, k, sequence):
     """
@@ -168,41 +249,71 @@ def MinimizerMatch(sequence, minimizer, library_minimizers, query_kmers, databas
     
     returns the 16S sequence with the highest alignment score with sequence
     """
-
-    for k in library_minimizers:
+    best_score = 0.0
+    best_match = None
+    
+    #add your code here to find the best kmer match
+    for k in database_kmers:
         if len(minimizer.intersection(library_minimizers[k][1])) >= minimum_minimizer_overlap:
-            return KmerMatch(query_kmers, database_kmers)
+            score = JaccardIndex(query_kmers, database_kmers[k])
+            if score > best_score:
+                best_score = score
+                best_match = k
+
+    return best_score, best_match
 
 
-def plot_agreement_curve_2(database, queries, BEST_K=15):
+def run_minimizers(database, queries, query_type, BEST_K=15):
     num_window_sizes = 10
     window_sizes = [15 * i + 20 for i in range(num_window_sizes)]
-    overall_scores = []
+    
+    file_path = f"saved_results/minimizers_{query_type}.json"
+    if not os.path.isfile(file_path):
+        overall_scores = []
 
-    # Calculate local align ground truth
-    agreement_results = {}
-    for k, sequence in queries.items():
-        _, alignment_best_match = AlignmentMatch(sequence, database)
-        agreement_results[k] = alignment_best_match
+        best_m = None
+        best_score = None
 
-    # Calculate kmers for queries and database based on best_K from previous part
-    database_kmers = ConvertLibaryToKmerSets(database, BEST_K)
-    queries_kmers = ConvertLibaryToKmerSets(queries, BEST_K)
+        # Calculate local align ground truth
+        local_alignment_results = get_local_alignment_results(database, queries, query_type)
 
-    for window_size in window_sizes:
-        print(f"Testing agreement for window size of length {window_size}")
-        database_minimizers = calculate_database_minimizers(window_size, BEST_K, database)
-        queries_minimizers = calculate_database_minimizers(window_size, BEST_K, queries)
-        scores = []
-        for k, sequence in queries.items():
-            _, minimizer_best_match = MinimizerMatch(sequence, queries_minimizers[k][1], database_minimizers, queries_kmers[k], database_kmers)
-            alignment_best_match = agreement_results[k]
-            if minimizer_best_match == alignment_best_match:
-                scores.append(1)
-            else:
-                scores.append(0)
-        
-        overall_scores.append(sum(scores) / len(scores))
+        # Calculate kmers for queries and database based on best_K from previous part
+        database_kmers = ConvertLibaryToKmerSets(database, BEST_K)
+        queries_kmers = ConvertLibaryToKmerSets(queries, BEST_K)
+
+        for window_size in window_sizes:
+            # print(f"Testing agreement for window size of length {window_size}")
+            database_minimizers = calculate_database_minimizers(window_size, BEST_K, database)
+            queries_minimizers = calculate_database_minimizers(window_size, BEST_K, queries)
+            scores = []
+            for k, sequence in queries.items():
+                _, minimizer_best_match = MinimizerMatch(sequence, queries_minimizers[k][1], database_minimizers, queries_kmers[k], database_kmers)
+                alignment_best_match = local_alignment_results[k]
+                if minimizer_best_match == alignment_best_match:
+                    scores.append(1)
+                else:
+                    scores.append(0)
+            
+            score = sum(scores) / len(scores)
+            overall_scores.append(score)
+            if best_score is None or score > best_score:
+                best_m = window_size
+                best_score = score
+    
+        with open(file_path, 'w') as f:
+            results = {
+                "overall_scores": overall_scores,
+                "best_m": best_m
+            }
+
+            json.dump(results, f)
+
+    else:
+        with open(file_path) as f:
+            results = json.load(f)
+            overall_scores = results["overall_scores"]
+            best_m = results["best_m"]
+
 
     plt.figure()
     plt.plot(window_sizes, overall_scores, marker='o')
@@ -210,9 +321,41 @@ def plot_agreement_curve_2(database, queries, BEST_K=15):
     plt.ylabel('Agreement')
     plt.title('Window size vs Alignment Agreement')
     plt.ylim(0, 1)
-    out_path = "task6.png"
-    plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    plt.savefig(f"graphs/agreement_against_window_size_{query_type}.png", bbox_inches='tight', dpi=300)
     plt.close()
+
+    return best_m
+
+
+def benchmark_minimizers(database, queries, query_type, best_K, best_m):
+    finished = True
+    for min_matches in [1,2,4,6]:
+        if not check_benchmark(f"minimizers_{min_matches}"):
+            finished = False
+    if finished:
+        return
+    
+    local_alignment_results = get_local_alignment_results(database, queries, query_type)
+
+    for min_matches in [1,2,4,6]:
+        start = time.time()
+        database_kmers = ConvertLibaryToKmerSets(database, best_K)
+        queries_kmers = ConvertLibaryToKmerSets(queries, best_K)
+        database_minimizers = calculate_database_minimizers(best_m, best_K, database)
+        queries_minimizers = calculate_database_minimizers(best_m, best_K, queries)
+        scores = []
+        for k, sequence in queries.items():
+            _, minimizer_best_match = MinimizerMatch(sequence, queries_minimizers[k][1], database_minimizers, queries_kmers[k], database_kmers, minimum_minimizer_overlap=min_matches)
+            alignment_best_match = local_alignment_results[k]
+            if minimizer_best_match == alignment_best_match:
+                scores.append(1)
+            else:
+                scores.append(0)
+        score = sum(scores) / len(scores)
+        end = time.time()
+        duration = end - start
+
+        save_benchmark(f"minimizers_{min_matches}", duration, score)
 
 
 def get_incorrect_base(base):
@@ -285,24 +428,70 @@ def compare_sequence_with_database(query_file, database):
         print(f"Score: {kmer_score}")
         
 
+def plot_benchmark_graph():
+    benchmark = {}
+    with open("saved_results/benchmark.json") as f:
+        benchmark = json.load(f)
+
+    names = []
+    durations = []
+    accuracies = []
+    for name, val in benchmark.items():
+        duration, acc = val
+        names.append(name)
+        durations.append(duration)
+        accuracies.append(acc)
+
+    if len(durations) == 0:
+        print("No benchmark entries to plot.")
+        return
+
+    plt.figure()
+    plt.scatter(durations, accuracies)
+    for i, label in enumerate(names):
+        plt.annotate(label, (durations[i], accuracies[i]), xytext=(5, 2), textcoords='offset points', fontsize=8)
+
+    plt.xlabel("Duration (s)")
+    plt.ylabel("Max agreement")
+    plt.ylim(0, 1)
+    plt.title("Benchmark: Max Agreement vs Duration")
+
+    out_path = "graphs/benchmark_plot.png"
+    plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    plt.close()
 
 
 if __name__ == "__main__":
+    # Task 1/2
     fn = "bacterial_16s_genes.fa"
-    database, queries = Load16SFastA(fn, fraction=0.5, database_size=10, query_size=5)
+    database, queries = Load16SFastA(fn, fraction=0.5, database_size=10, query_size=10)
 
-    print ("Loaded %d 16s database sequences." % len(database))
-    print ("Loaded %d 16s query sequences." % len(queries))
+    print("Loaded %d 16s database sequences." % len(database))
+    print("Loaded %d 16s query sequences." % len(queries))
 
-    best_K = plot_agreement_curve_1(database, queries)
-    print(f"Best K-mer size is {best_K}")
-    plot_agreement_curve_2(database, queries, BEST_K = best_K)
+    # Task 3/4
+    print("Running alignment free for regular")
+    best_K = run_alignment_free(database, queries, "regular")
+    print("Benchmarking alignment free")
+    benchmark_alignment_free(database, queries, "regular", best_K)
 
+    # Task 5/6
+    print("Running minimizers for regular")
+    best_m = run_minimizers(database, queries, "regular", BEST_K=best_K)
+    print("Benchmarking minimizer free")
+    benchmark_minimizers(database, queries, "regular", best_K, best_m)
+
+    # Task 7
+    print("Running for illumina mutation")
     illumina_queries = illumina_mutation(queries)
-    nanopore_queries = nanopore_mutation(queries)
-   
+    best_K_illumina = run_alignment_free(database, illumina_queries, "illumina")
+    best_m_illumina = run_minimizers(database, illumina_queries, "illumina", BEST_K=best_K_illumina)
 
-    # task 10 comparing sequence to database
+    # Task 7
+    print("Running for nanopore mutation")
+    nanopore_queries = nanopore_mutation(queries)
+
+    # Task 10 comparing sequence to database
     database, _ = Load16SFastA(fn, fraction=1.0, database_size=20486, query_size=0)
 
     # file to read from
