@@ -7,9 +7,12 @@ Created on Thu Oct  4 17:32:48 2018
 import alignment
 import random
 import matplotlib.pyplot as plt
+import seaborn as sns
 import time
 import json
 import os
+import pandas as pd
+import numpy as np
 random.seed(11)
 
 
@@ -113,9 +116,12 @@ def get_local_alignment_results(database, queries, query_type):
 
     start = time.time()
     agreement_results = {}
-    for k, sequence in queries.items():
+    for i, (k, sequence) in enumerate(queries.items()):
+        if i % 5 == 0:
+            print(f"Finished aligning {i}/{len(queries)} queries")
         _, alignment_best_match = AlignmentMatch(sequence, database)
         agreement_results[k] = alignment_best_match
+    print(f"Finished aligning {len(queries)}/{len(queries)} queries")
     end = time.time()
 
     duration = end - start
@@ -178,8 +184,9 @@ def run_alignment_free(database, queries, query_type):
     plt.plot(thresholds, overall_scores, marker='o')
     plt.xlabel('K-mer length')
     plt.ylabel('Agreement')
-    plt.title('K-mer vs Alignment Agreement')
+    plt.title('Agreement of alignment free sequence matching against K-mer length')
     plt.ylim(0, 1)
+    plt.xticks(thresholds)
     plt.savefig(f"graphs/agreement_against_kmer_size_{query_type}.png", bbox_inches='tight', dpi=300)
     plt.close()
 
@@ -214,15 +221,15 @@ def calculateMinimizers(window_size, k, sequence):
     """
     returns: set of minimizers for each sequence
     """
-    num_windows = int(len(sequence)/(window_size-k))
+    kmers = [sequence[i:i+k] for i in range(len(sequence) - k + 1)]
+
+    window_kmer_count = window_size - k + 1
+    num_windows = len(kmers) - window_kmer_count + 1
+    
     minimizers = set()
-    for i in range(num_windows):
-        window_start_index = window_size * i
-        minimizer = None
-        for seq_index in range(len(sequence) - k):
-            current_kmer = sequence[window_start_index + seq_index : window_start_index + seq_index + k]
-            if minimizer is None or current_kmer < minimizer: 
-                minimizer = current_kmer
+    for wstart in range(num_windows):
+        window_kmers = kmers[wstart : wstart + window_kmer_count]
+        minimizer = min(window_kmers)
         minimizers.add(minimizer)
 
     return minimizers
@@ -238,7 +245,6 @@ def calculate_database_minimizers(window_size, k, database):
         database_minimizers[seq] = (database[seq], seq_minimizers)
 
     return database_minimizers
-
 
 def MinimizerMatch(sequence, minimizer, library_minimizers, query_kmers, database_kmers, minimum_minimizer_overlap=1):
     """
@@ -313,7 +319,6 @@ def run_minimizers(database, queries, query_type, BEST_K=15):
             results = json.load(f)
             overall_scores = results["overall_scores"]
             best_m = results["best_m"]
-
 
     plt.figure()
     plt.plot(window_sizes, overall_scores, marker='o')
@@ -430,14 +435,14 @@ def compare_sequence_with_database(query_file, database):
 
 def plot_benchmark_graph():
     benchmark = {}
-    with open("saved_results/benchmark.json") as f:
+    with open("benchmark.json") as f:
         benchmark = json.load(f)
 
     names = []
     durations = []
     accuracies = []
     for name, val in benchmark.items():
-        duration, acc = val
+        duration, acc = float(val[0]), float(val[1])
         names.append(name)
         durations.append(duration)
         accuracies.append(acc)
@@ -446,55 +451,152 @@ def plot_benchmark_graph():
         print("No benchmark entries to plot.")
         return
 
-    plt.figure()
-    plt.scatter(durations, accuracies)
-    for i, label in enumerate(names):
-        plt.annotate(label, (durations[i], accuracies[i]), xytext=(5, 2), textcoords='offset points', fontsize=8)
+    pos = np.arange(len(names))
+    width = 0.35
 
-    plt.xlabel("Duration (s)")
-    plt.ylabel("Max agreement")
-    plt.ylim(0, 1)
-    plt.title("Benchmark: Max Agreement vs Duration")
+    fig, ax1 = plt.subplots(figsize=(12, 6))
 
+    # Blue bars: durations (log scale)
+    bars1 = ax1.bar(pos - width/2, durations, width, color='tab:green', label='Total runtime')
+    ax1.set_yscale('log')
+    ax1.set_ylabel("Total runtime (s, log scale)")
+    ax1.set_xticks(pos)
+    ax1.set_ylim(min(durations) * 0.5, max(durations) * 5)
+    ax1.set_xticklabels(names, rotation=30, ha='right')
+
+    ax2 = ax1.twinx()
+    bars2 = ax2.bar(pos + width/2, accuracies, width, color='tab:red', label='Max agreement')
+    ax2.set_ylim(0, 1.2)
+    ax2.set_ylabel("Max agreement")
+
+    # Combined legend
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(handles1 + handles2, labels1 + labels2, loc='upper right')
+
+    # Annotate bars
+    for i, d in enumerate(durations):
+        ax1.text(pos[i] - width/2, d * 1.05, f"{d:.2f}s", ha='center', va='bottom', fontsize=8)
+    for i, a in enumerate(accuracies):
+        ax2.text(pos[i] + width/2, a + 0.02, f"{a:.2f}", ha='center', va='bottom', fontsize=8)
+
+    plt.title("Benchmark runtimes and max agreements for different methods")
+    plt.grid(True, which='both', ls='--', lw=0.5, alpha=0.3)
+
+    os.makedirs("graphs", exist_ok=True)
     out_path = "graphs/benchmark_plot.png"
     plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    plt.close()
+    print("Saved benchmark plot to", out_path)
+
+
+def get_results(name):
+    with open(f"saved_results/{name}.json", 'r') as f:
+        results = json.load(f)
+    return results
+
+
+def plot_mutations_alignment_free():
+    regular = get_results("alignment_free_regular")["overall_scores"]
+    illumina = get_results("alignment_free_illumina")["overall_scores"]
+    nanopore = get_results("alignment_free_nanopore")["overall_scores"]
+    thresholds = [2 * i + 1 for i in range(len(regular))]
+
+    data = pd.DataFrame({
+        'x': thresholds,
+        'No mutation': regular,
+        'Illumina': illumina,
+        'Nanopore': nanopore
+    })
+
+    plt.figure()
+    sns.lineplot(data=data, x='x', y='No mutation', label='No mutation', marker='o')
+    sns.lineplot(data=data, x='x', y='Nanopore', label='Nanopore', marker='o')
+    sns.lineplot(data=data, x='x', y='Illumina', label='Illumina', marker='o')
+    plt.xlabel('K-mer length')
+    plt.ylabel('Agreement')
+    plt.title('Agreement of alignment free sequence matching against K-mer length')
+    plt.ylim(0, 0.65)
+    plt.xticks(thresholds)
+    plt.savefig(f"graphs/mutations_afsm.png", bbox_inches='tight', dpi=300)
+    plt.close()
+
+    
+def plot_mutations_minimizers():
+    regular = get_results("minimizers_regular")["overall_scores"]
+    illumina = get_results("minimizers_illumina")["overall_scores"]
+    nanopore = get_results("minimizers_nanopore")["overall_scores"]
+    window_sizes = [15 * i + 20 for i in range(10)]
+
+    data = pd.DataFrame({
+        'x': window_sizes,
+        'No mutation': regular,
+        'Illumina': illumina,
+        'Nanopore': nanopore
+    })
+
+
+    plt.figure()
+    sns.lineplot(data=data, x='x', y='No mutation', label='No mutation', marker='o')
+    sns.lineplot(data=data, x='x', y='Nanopore', label='Nanopore', marker='o')
+    sns.lineplot(data=data, x='x', y='Illumina', label='Illumina', marker='o')
+    plt.xlabel('Window Size')
+    plt.ylabel('Agreement')
+    plt.title('Agreement of minimizers matching against Window Size')
+    plt.ylim(0, 0.8)
+    plt.xticks(window_sizes)
+    plt.savefig(f"graphs/mutations_minimizers.png", bbox_inches='tight', dpi=300)
     plt.close()
 
 
 if __name__ == "__main__":
     # Task 1/2
     fn = "bacterial_16s_genes.fa"
-    database, queries = Load16SFastA(fn, fraction=0.5, database_size=10, query_size=10)
+    database, queries = Load16SFastA(fn, fraction=0.5)
+
+    # queries = []
+    # with open("query_data.json", 'r') as f:
+    #     queries = json.load(f)
+    # database = []
+    # with open("database_data.json", 'r') as f:
+    #     database = json.load(f)
 
     print("Loaded %d 16s database sequences." % len(database))
     print("Loaded %d 16s query sequences." % len(queries))
 
     # Task 3/4
-    print("Running alignment free for regular")
+    print("\nRunning alignment free for regular")
     best_K = run_alignment_free(database, queries, "regular")
-    print("Benchmarking alignment free")
-    benchmark_alignment_free(database, queries, "regular", best_K)
+    print("\nBenchmarking alignment free")
+    # benchmark_alignment_free(database, queries, "regular", best_K)
 
     # Task 5/6
-    print("Running minimizers for regular")
+    print("\nRunning minimizers for regular")
     best_m = run_minimizers(database, queries, "regular", BEST_K=best_K)
-    print("Benchmarking minimizer free")
-    benchmark_minimizers(database, queries, "regular", best_K, best_m)
+    print(f"\nBenchmarking minimizer free with best k {best_K}, best_m {best_m}")
+    # benchmark_minimizers(database, queries, "regular", best_K, best_m)
 
     # Task 7
-    print("Running for illumina mutation")
+    print("\nRunning for illumina mutation")
     illumina_queries = illumina_mutation(queries)
     best_K_illumina = run_alignment_free(database, illumina_queries, "illumina")
     best_m_illumina = run_minimizers(database, illumina_queries, "illumina", BEST_K=best_K_illumina)
 
     # Task 7
-    print("Running for nanopore mutation")
+    print("\nRunning for nanopore mutation")
     nanopore_queries = nanopore_mutation(queries)
+    best_K_nanopore = run_alignment_free(database, nanopore_queries, "nanopore")
+    best_m_nanopore = run_minimizers(database, nanopore_queries, "nanopore", BEST_K=best_K_nanopore)
+
+    plot_mutations_alignment_free()
+    plot_mutations_minimizers()
+    plot_benchmark_graph()
 
     # Task 10 comparing sequence to database
-    database, _ = Load16SFastA(fn, fraction=1.0, database_size=20486, query_size=0)
+    # print("\nComparing sequence to database")
+    # database, _ = Load16SFastA(fn, fraction=1.0, database_size=20486, query_size=0)
 
-    # file to read from
-    query_fasta_file = 'Kangas0346_21_R1-16S-rRNA-seqR.fasta'
-    compare_sequence_with_database(query_fasta_file, database)
+    # # file to read from
+    # query_fasta_file = 'Kangas0346_21_R1-16S-rRNA-seqR.fasta'
+    # compare_sequence_with_database(query_fasta_file, database)
     
