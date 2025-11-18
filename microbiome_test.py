@@ -554,13 +554,6 @@ if __name__ == "__main__":
     fn = "bacterial_16s_genes.fa"
     database, queries = Load16SFastA(fn, fraction=0.5)
 
-    # queries = []
-    # with open("query_data.json", 'r') as f:
-    #     queries = json.load(f)
-    # database = []
-    # with open("database_data.json", 'r') as f:
-    #     database = json.load(f)
-
     print("Loaded %d 16s database sequences." % len(database))
     print("Loaded %d 16s query sequences." % len(queries))
 
