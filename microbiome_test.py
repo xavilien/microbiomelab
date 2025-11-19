@@ -185,7 +185,7 @@ def run_alignment_free(database, queries, query_type):
     plt.xlabel('K-mer length')
     plt.ylabel('Agreement')
     plt.title('Agreement of alignment free sequence matching against K-mer length')
-    plt.ylim(0, 1)
+    plt.ylim(0, 0.65)
     plt.xticks(thresholds)
     plt.savefig(f"graphs/agreement_against_kmer_size_{query_type}.png", bbox_inches='tight', dpi=300)
     plt.close()
