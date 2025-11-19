@@ -324,7 +324,7 @@ def run_minimizers(database, queries, query_type, BEST_K=15):
     plt.plot(window_sizes, overall_scores, marker='o')
     plt.xlabel('Window size')
     plt.ylabel('Agreement')
-    plt.title('Window size vs Alignment Agreement')
+    plt.title('Agreement of minimizers matching against window size')
     plt.ylim(0, 1)
     plt.savefig(f"graphs/agreement_against_window_size_{query_type}.png", bbox_inches='tight', dpi=300)
     plt.close()
