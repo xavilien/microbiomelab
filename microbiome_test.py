@@ -444,7 +444,7 @@ def plot_benchmark_graph():
     for name, val in benchmark.items():
         duration, acc = float(val[0]), float(val[1])
         names.append(name)
-        durations.append(duration)
+        durations.append(duration/50)
         accuracies.append(acc)
 
     if len(durations) == 0:
@@ -459,7 +459,7 @@ def plot_benchmark_graph():
     # Blue bars: durations (log scale)
     bars1 = ax1.bar(pos - width/2, durations, width, color='tab:green', label='Total runtime')
     ax1.set_yscale('log')
-    ax1.set_ylabel("Total runtime (s, log scale)")
+    ax1.set_ylabel("Seconds per query sequence (s/query, log scale)")
     ax1.set_xticks(pos)
     ax1.set_ylim(min(durations) * 0.5, max(durations) * 5)
     ax1.set_xticklabels(names, rotation=30, ha='right')
